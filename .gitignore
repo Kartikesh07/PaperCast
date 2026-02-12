@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+output/*.mp3
+output/*.wav
+output/*.txt
+*.egg-info/
+dist/
+build/
+.streamlit/

@@ -1,0 +1,21 @@
+# Core
+streamlit>=1.30.0
+PyMuPDF>=1.23.0
+requests>=2.31.0
+pydub>=0.25.1
+audioop-lts>=0.2.2         # Python 3.13+ compat shim for pydub
+python-dotenv>=1.0.0
+
+# Groq (LLM + TTS, default backend)
+groq>=0.9.0
+
+# TTS
+edge-tts>=6.1.9
+nest-asyncio>=1.5.8
+
+# LLM backends — optional, install the ones you need
+# openai>=1.10.0       # uncomment if using OpenAI
+# anthropic>=0.18.0    # uncomment if using Anthropic
+
+# Coqui TTS — optional, large download (~1 GB)
+# TTS>=0.22.0          # uncomment if using Coqui TTS offline
