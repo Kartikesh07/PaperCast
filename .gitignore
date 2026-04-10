@@ -10,6 +10,10 @@ dist/
 build/
 .streamlit/
 
+# Paper cache (local artifacts — not source code)
+cache/
+
+
 
 # Logs
 logs

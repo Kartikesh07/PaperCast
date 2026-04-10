@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 import fitz  # PyMuPDF
+
+from src.page_indexer import PageIndex, build_page_index
 import requests
 
 import config
@@ -98,6 +100,7 @@ class PaperSections:
     conclusion: str = ""
     raw_text: str = ""
     latex_expressions: list[str] = field(default_factory=list)
+    page_index: Optional[PageIndex] = field(default=None, repr=False)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -453,8 +456,15 @@ def parse_paper(url_or_id: str, keep_pdf: bool = False) -> PaperSections:
     """
     pdf_path = download_pdf(url_or_id)
 
+    page_index: Optional[PageIndex] = None
     try:
         raw_text = _extract_text_from_pdf(pdf_path)
+        # Build the BM25 page index while the PDF is still on disk.
+        # This must happen before the file is deleted.
+        try:
+            page_index = build_page_index(pdf_path)
+        except Exception as idx_exc:
+            logger.warning("Page index build failed (non-fatal): %s", idx_exc)
     finally:
         if not keep_pdf:
             pdf_path.unlink(missing_ok=True)
@@ -477,5 +487,6 @@ def parse_paper(url_or_id: str, keep_pdf: bool = False) -> PaperSections:
         conclusion=section_map.get("conclusion", ""),
         raw_text=raw_text,
         latex_expressions=latex_exprs,
+        page_index=page_index,
     )
     return paper

@@ -20,6 +20,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# Cache directory (paper results cached by arXiv ID — zero API calls on re-run)
+CACHE_DIR = PROJECT_ROOT / "cache"
+CACHE_DIR.mkdir(exist_ok=True)
+
+# Set CACHE_ENABLED=false in .env to disable caching entirely
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() not in ("0", "false", "no")
+
 # ──────────────────────────────────────────────
 # LLM Backend  ("groq" | "openai" | "anthropic" | "ollama")
 # ──────────────────────────────────────────────
@@ -70,4 +77,28 @@ AUDIO_FORMAT = "wav"             # wav works without ffmpeg; change to mp3 if ff
 # Pipeline
 # ──────────────────────────────────────────────
 MAX_SECTION_CHARS = 6000  # truncate very long sections before sending to LLM
+                          # (used as fallback when page index is not available)
 MIN_DIALOGUE_TURNS = 4    # minimum host/expert exchanges per section
+
+# ──────────────────────────────────────────────
+# Page Index RAG
+# ──────────────────────────────────────────────
+# Number of top BM25-scored passages retrieved per section during generation.
+# Higher values = richer context but longer prompts.
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "8"))
+
+# ──────────────────────────────────────────────
+# Agentic Pipeline
+# ──────────────────────────────────────────────
+# Master switch — set AGENTIC_ENABLED=false to use original sequential pipeline
+AGENTIC_ENABLED = os.getenv("AGENTIC_ENABLED", "true").lower() not in ("0", "false", "no")
+
+# CriticAgent — reviews each segment and optionally triggers a rewrite
+CRITIC_ENABLED = os.getenv("CRITIC_ENABLED", "true").lower() not in ("0", "false", "no")
+CRITIC_MAX_RETRIES = int(os.getenv("CRITIC_MAX_RETRIES", "1"))
+
+# EditorAgent — injects bridging HOST/EXPERT turns between sections
+EDITOR_ENABLED = os.getenv("EDITOR_ENABLED", "true").lower() not in ("0", "false", "no")
+
+# Target number of "full" sections the Planner should aim for
+PLANNER_TARGET_FULL_SECTIONS = int(os.getenv("PLANNER_TARGET_FULL_SECTIONS", "4"))

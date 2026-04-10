@@ -1,13 +1,17 @@
 import { useState } from "react";
+import PaperChat from "./PaperChat";
+import AgentReport from "./AgentReport";
 
 export default function ResultsPanel({ data }) {
   const [activeTab, setActiveTab] = useState("transcript");
-  const { title, authors, abstract, transcript, audio_url } = data;
+  const { title, authors, abstract, transcript, audio_url, arxiv_id, agent_report } = data;
 
   const tabs = [
     { id: "transcript", label: "Transcript", icon: "📝" },
     ...(audio_url ? [{ id: "audio", label: "Audio", icon: "🎧" }] : []),
     { id: "paper", label: "Paper Info", icon: "📄" },
+    ...(arxiv_id ? [{ id: "ask", label: "Ask", icon: "💬" }] : []),
+    { id: "report", label: "Report", icon: "📊" },
   ];
 
   return (
@@ -60,6 +64,12 @@ export default function ResultsPanel({ data }) {
         )}
         {activeTab === "paper" && (
           <PaperInfo title={title} authors={authors} abstract={abstract} />
+        )}
+        {activeTab === "ask" && arxiv_id && (
+          <PaperChat arxivId={arxiv_id} paperTitle={title} />
+        )}
+        {activeTab === "report" && (
+          <AgentReport agentReport={agent_report} />
         )}
       </div>
     </div>

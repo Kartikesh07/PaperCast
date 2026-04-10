@@ -24,6 +24,7 @@ from src.latex_to_speech import replace_latex_placeholders
 from src.dialogue_generator import generate_script, FullScript
 from src.post_processor import post_process, ProcessedScript
 from src.tts_engine import generate_audio
+from src.cache import extract_arxiv_id, load_cached_entry, save_cache_entry
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ def run_pipeline(
     generate_audio_flag: bool = True,
     output_dir: Optional[Path] = None,
     progress_callback: Optional[Callable[[str, float], None]] = None,
+    force_refresh: bool = False,
 ) -> dict:
     """
     Execute the full paper → podcast pipeline.
@@ -78,10 +80,31 @@ def run_pipeline(
     out = output_dir or config.OUTPUT_DIR
     out.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the backend/engine with config defaults now so we can store
+    # them in cache metadata.
+    resolved_backend = (llm_backend or config.LLM_BACKEND).lower()
+    resolved_tts = (tts_engine or config.TTS_ENGINE).lower()
+
     def _progress(msg: str, frac: float) -> None:
         logger.info("[%.0f%%] %s", frac * 100, msg)
         if progress_callback:
             progress_callback(msg, frac)
+
+    # ── 0. Cache check ────────────────────────────────
+    arxiv_id = extract_arxiv_id(arxiv_url)
+    if not force_refresh:
+        cached = load_cached_entry(arxiv_id)
+        if cached is not None:
+            _progress("⚡ Loaded from cache!", 0.05)
+            _progress(f"Paper: {cached.paper.title}", 0.50)
+            _progress("⚡ Cache hit — skipping all LLM and TTS calls.", 1.0)
+            return {
+                "paper": cached.paper,
+                "script": cached.script,
+                "transcript_path": cached.transcript_path,
+                "audio_path": cached.audio_path,
+                "from_cache": True,
+            }
 
     # ── 1. Parse paper ───────────────────────────────────────
     _progress("Downloading and parsing paper…", 0.0)
@@ -98,17 +121,19 @@ def run_pipeline(
     paper.abstract = sections["abstract"]
     _progress("LaTeX conversion complete.", 0.15)
 
-    # ── 3. Generate dialogue ─────────────────────────────────
+    # ── 3. Generate dialogue ───────────────────────────────
     def _llm_progress(msg: str, frac: float) -> None:
         # Map the 0-1 range from the generator into the 0.15-0.75 band
         _progress(msg, 0.15 + frac * 0.60)
 
-    raw_script: FullScript = generate_script(
+    raw_script: FullScript
+    raw_script, agent_report = generate_script(
         paper_sections=sections,
         title=paper.title,
         authors=paper.authors,
         backend=llm_backend,
         progress_callback=_llm_progress,
+        page_index=paper.page_index,
     )
 
     # ── 4. Post-process ──────────────────────────────────────
@@ -137,9 +162,24 @@ def run_pipeline(
 
     _progress("Pipeline finished!", 1.0)
 
-    return {
+    result = {
         "paper": paper,
         "script": processed,
         "transcript_path": transcript_path,
         "audio_path": audio_path,
+        "from_cache": False,
+        "agent_report": agent_report,
     }
+
+    # ── 6. Save to cache ─────────────────────────────────
+    save_cache_entry(
+        arxiv_id=arxiv_id,
+        paper=paper,
+        script=processed,
+        transcript_path=transcript_path,
+        audio_path=audio_path,
+        llm_backend=resolved_backend,
+        tts_engine=resolved_tts,
+    )
+
+    return result

@@ -51,3 +51,20 @@ export async function fetchJobStatus(jobId) {
 export function getAudioUrl(path) {
   return `${API_BASE}${path}`;
 }
+
+export async function askQuestion(arxivId, question, conversationHistory = []) {
+  const res = await fetch(`${API_BASE}/api/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      arxiv_id: arxivId,
+      question,
+      conversation_history: conversationHistory,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}

@@ -230,3 +230,189 @@ def build_takeaway_messages(paper_summary: str) -> list[dict[str, str]]:
         },
         {"role": "user", "content": f"Paper summary: {paper_summary}"},
     ]
+
+
+# ─────────────────────────────────────────────
+# Agentic prompt builders
+# ─────────────────────────────────────────────
+
+_PLANNER_SYSTEM = """You are an expert podcast producer planning a science podcast episode.
+Given partial content of an academic paper, produce a structured episode plan.
+
+PAPER TYPES:
+- empirical: paper runs experiments/benchmarks and reports quantitative results
+- survey: paper reviews and synthesises existing literature
+- theoretical: paper proposes new theory, proofs, or mathematical frameworks
+- application: paper applies existing methods to a real-world problem/product
+
+EPISODE DURATIONS (pick based on paper complexity and richness):
+- short: 7-10 min   → 3 active sections, ~4 turns each
+- medium: 12-16 min → 4 active sections, ~5-6 turns each
+- long: 20-28 min   → 5-6 active sections, ~6-8 turns each
+
+SECTION DEPTH:
+- full: deserves dedicated dialogue (rich content, novel contribution)
+- brief: cover in 2-3 turns (thin content, derivative, or covered elsewhere)
+- skip: omit entirely (duplicate, empty, or irrelevant for listeners)
+
+RULES:
+1. Return ONLY valid JSON — no markdown, no explanation.
+2. Every section in `available_sections` must appear in your output.
+3. `abstract` is always "brief" (intro covers it better).
+4. At least one section must be "full".
+5. `focus_hint` is a single sentence telling the writer what to emphasise.
+6. `turn_count` is the TARGET number of HOST↔EXPERT pairs (not lines, not words).
+"""
+
+
+def build_planner_messages(
+    title: str,
+    abstract: str,
+    introduction: str,
+    conclusion: str,
+    available_sections: list[str],
+) -> list[dict[str, str]]:
+    """Build messages for the PlannerAgent's single planning call."""
+    sections_list = ", ".join(available_sections)
+    user_content = (
+        f"Paper title: {title}\n\n"
+        f"Abstract:\n{abstract[:1500]}\n\n"
+        f"Introduction (first 800 chars):\n{introduction[:800]}\n\n"
+        f"Conclusion (first 800 chars):\n{conclusion[:800]}\n\n"
+        f"Available sections: {sections_list}\n\n"
+        "Return a JSON object with exactly this structure:\n"
+        "{\n"
+        '  "paper_type": "empirical|survey|theoretical|application",\n'
+        '  "episode_angle": "<one engaging sentence about what makes this paper exciting>",\n'
+        '  "target_duration": "short|medium|long",\n'
+        '  "sections": [\n'
+        '    {"key": "<section_key>", "display": "<Display Name>", '
+        '"depth": "full|brief|skip", "focus_hint": "<what to focus on>", "turn_count": <int>},\n'
+        "    ...\n"
+        "  ]\n"
+        "}"
+    )
+    return [
+        {"role": "system", "content": _PLANNER_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+
+
+_CRITIC_SYSTEM = """You are a fact-checking editor for a science podcast.
+Review the provided HOST/EXPERT dialogue segment against its source text.
+
+Check for:
+1. FAITHFULNESS: Does the dialogue invent facts, numbers, or claims not in the source?
+2. PACING: Is the dialogue a balanced exchange, or does one person lecture for too long?
+3. RELEVANCE: Does the dialogue actually cover the key ideas from this section?
+
+Severity levels:
+- none:  no issues (or only cosmetic stylistic differences)
+- minor: small inaccuracies or pacing imbalance, but overall acceptable
+- major: invented facts, wrong numbers, or key content completely missed
+
+RULES:
+- Return ONLY valid JSON — no markdown, no explanation.
+- "passed" must be true for none/minor severity, false for major.
+- "issues" is a list of specific problems (empty list if passed).
+- "suggestions" is one sentence of corrective instruction (empty string if passed).
+"""
+
+
+def build_critic_messages(
+    section_title: str,
+    source_text: str,
+    dialogue: str,
+) -> list[dict[str, str]]:
+    """Build messages for the CriticAgent's segment review."""
+    user_content = (
+        f"Section: {section_title}\n\n"
+        f"--- SOURCE TEXT ---\n{source_text}\n--- END SOURCE ---\n\n"
+        f"--- GENERATED DIALOGUE ---\n{dialogue}\n--- END DIALOGUE ---\n\n"
+        "Return a JSON object:\n"
+        '{"passed": true|false, "severity": "none|minor|major", '
+        '"issues": ["<issue1>", ...], "suggestions": "<corrective hint>"}'
+    )
+    return [
+        {"role": "system", "content": _CRITIC_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+
+
+_EDITOR_SYSTEM = """You are a podcast script editor. Your job is to write SHORT bridging
+dialogue turns that connect consecutive sections of a podcast episode.
+
+For each consecutive pair of sections, write a 2-turn HOST/EXPERT bridge that:
+  - HOST: pivots from what was just discussed (brief, 1-2 sentences)
+  - EXPERT: bridges to the next topic with a natural hook (1-2 sentences)
+
+RULES:
+- Each bridge must be exactly HOST: <text>\\nEXPERT: <text> — nothing else.
+- Keep it natural and conversational. Never say "Now let's move on to..."
+- The bridge should feel like it belongs in the episode, not like a chapter announcement.
+- Return ONLY valid JSON — no markdown fencing.
+"""
+
+
+def build_editor_messages(
+    paper_summary: str,
+    section_sequence: list[str],
+    section_tails: list[str],
+) -> list[dict[str, str]]:
+    """Build messages for the EditorAgent's bridging pass."""
+    pairs = []
+    for i in range(len(section_sequence) - 1):
+        pairs.append(
+            f"Pair {i+1}: '{section_sequence[i]}' → '{section_sequence[i+1]}'\n"
+            f"  End of '{section_sequence[i]}': {section_tails[i]}\n"
+            f"  Start of '{section_sequence[i+1]}': (to be continued)"
+        )
+    pairs_text = "\n\n".join(pairs)
+
+    # Build from/to key-pairs for the JSON template
+    json_template_items = []
+    for i in range(len(section_sequence) - 1):
+        from_key = section_sequence[i].lower().replace(" ", "_")
+        to_key = section_sequence[i + 1].lower().replace(" ", "_")
+        json_template_items.append(
+            f'    {{"from_section": "{from_key}", "to_section": "{to_key}", '
+            f'"dialogue": "HOST: ...\\nEXPERT: ..."}}'
+        )
+    json_template = "{\n  \"bridges\": [\n" + ",\n".join(json_template_items) + "\n  ]\n}"
+
+    user_content = (
+        f"Paper summary: {paper_summary[:500]}\n\n"
+        f"Section transitions to bridge:\n{pairs_text}\n\n"
+        f"Return JSON with this exact structure:\n{json_template}"
+    )
+    return [
+        {"role": "system", "content": _EDITOR_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def build_brief_dialogue_messages(
+    section_title: str,
+    section_text: str,
+    paper_summary: str,
+    focus_hint: str = "",
+) -> list[dict[str, str]]:
+    """
+    Build messages for a BRIEF section (2-3 turn variant).
+
+    Used by the WriterAgent for sections the Planner marked as "brief".
+    """
+    hint_line = f"\nFocus specifically on: {focus_hint}" if focus_hint else ""
+    user_content = (
+        f"Paper summary (for context): {paper_summary}\n\n"
+        f"Generate a BRIEF podcast dialogue for this section — exactly 2-3 HOST/EXPERT exchanges.\n"
+        f"Keep each turn to 1-2 sentences. Be punchy and informative.{hint_line}\n\n"
+        f"Section title: {section_title}\n"
+        f"Section text:\n{section_text}\n\n"
+        f"Use the HOST:/EXPERT: format. HOST speaks first."
+    )
+    return [
+        {"role": "system", "content": DIALOGUE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
